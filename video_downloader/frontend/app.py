@@ -1,48 +1,79 @@
-from flask import Flask, render_template, request, jsonify, Response
-import requests
+from flask import Flask, render_template, request, jsonify, send_file
+from services.downloader import get_info, download_video, clean_url
 import os
+import threading
+import time
 
 app = Flask(__name__)
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8001")
+
+def remove_file(path: str, delay: int = 1):
+    """
+    Remove file after a short delay to ensure the file handle is closed.
+    """
+    def _delete():
+        time.sleep(delay)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                print(f"Deleted file: {path}")
+        except Exception as e:
+            print(f"Error deleting file {path}: {e}")
+    
+    thread = threading.Thread(target=_delete)
+    thread.start()
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/api/download', methods=['POST'])
-def proxy_download():
-    try:
-        data = request.json
-        # Stream the request to the backend
-        # Note: requests.post with stream=True
-        resp = requests.post(f"{BACKEND_URL}/download", json=data, stream=True)
-        
-        if resp.status_code != 200:
-            return jsonify(resp.json()), resp.status_code
-            
-        # Stream the response back to the client
-        # We also want to forward headers like Content-Disposition
-        headers = {
-            'Content-Disposition': resp.headers.get('Content-Disposition'),
-            'Content-Type': resp.headers.get('Content-Type')
-        }
-        
-        return Response(
-            resp.iter_content(chunk_size=1024),
-            status=resp.status_code,
-            headers=headers
-        )
-    except requests.RequestException as e:
-        return jsonify({"error": str(e), "message": "Backend connection failed"}), 502
-
 @app.route('/api/info', methods=['POST'])
-def proxy_info():
+def get_video_info():
     try:
-        data = request.json
-        resp = requests.post(f"{BACKEND_URL}/info", json=data)
-        return jsonify(resp.json()), resp.status_code
-    except requests.RequestException as e:
-        return jsonify({"error": str(e), "message": "Backend connection failed"}), 502
+        data = request.get_json()
+        if not data or 'url' not in data:
+            return jsonify({"error": "Missing URL"}), 400
+            
+        url = data['url']
+        cleaned_url = clean_url(url)
+        info = get_info(cleaned_url)
+        
+        return jsonify({
+            "title": info.get('title', 'Unknown Title'),
+            "id": info.get('id', 'Unknown ID'),
+            "webpage_url": info.get('webpage_url', cleaned_url)
+        })
+    except Exception as e:
+        return jsonify({"detail": str(e)}), 400
+
+@app.route('/api/download', methods=['POST'])
+def download():
+    try:
+        data = request.get_json()
+        if not data or 'url' not in data:
+            return jsonify({"error": "Missing URL"}), 400
+            
+        url = data['url']
+        cleaned_url = clean_url(url)
+        
+        # Download the video
+        file_path, title = download_video(cleaned_url)
+        
+        # Determine filename
+        ext = os.path.splitext(file_path)[1]
+        filename = f"{title}{ext}"
+        
+        # Schedule file deletion
+        remove_file(file_path, delay=5)
+        
+        return send_file(
+            file_path, 
+            as_attachment=True, 
+            download_name=filename,
+            mimetype='application/octet-stream'
+        )
+        
+    except Exception as e:
+        return jsonify({"detail": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)
