@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Premium Video Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>Video Downloader</h1>
+            <p class="subtitle">Download videos directly to your device</p>
+
+            <form id="downloadForm">
+                <div class="form-group">
+                    <label for="url">Video URL</label>
+                    <input type="text" id="url" name="url" placeholder="Paste link here..." required>
+                </div>
+
+                <button type="submit" class="btn" id="submitBtn">
+                    <span>Download File</span>
+                </button>
+            </form>
+
+            <div id="status"></div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('downloadForm');
+        const statusDiv = document.getElementById('status');
+        const submitBtn = document.getElementById('submitBtn');
+        const btnText = submitBtn.querySelector('span');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const url = document.getElementById('url').value;
+
+            // UI Loading State
+            submitBtn.disabled = true;
+            btnText.innerHTML = '<span class="loader"></span> downloading...';
+            statusDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = 'video.mp4';
+
+                    if (contentDisposition) {
+                        // 1. Try to find filename*=UTF-8''EncodedString
+                        const utf8Matches = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
+                        if (utf8Matches && utf8Matches[1]) {
+                            filename = decodeURIComponent(utf8Matches[1]);
+                        } else {
+                            // 2. Fallback to filename="String"
+                            const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                            const matches = filenameRegex.exec(contentDisposition);
+                            if (matches != null && matches[1]) {
+                                filename = matches[1].replace(/['"]/g, '');
+                            }
+                        }
+                    }
+
+                    // Trigger download
+                    const fileUrl = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = fileUrl;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(fileUrl);
+
+                    statusDiv.style.display = 'block';
+                    statusDiv.innerHTML = '✅ Download started: ' + filename;
+                    statusDiv.style.color = '#4ade80';
+                } else {
+                    const data = await response.json();
+                    statusDiv.style.display = 'block';
+                    statusDiv.innerHTML = '❌ Error: ' + (data.detail || data.message || 'Unknown error');
+                    statusDiv.style.color = '#f87171';
+                }
+
+            } catch (err) {
+                statusDiv.style.display = 'block';
+                statusDiv.innerHTML = '❌ Network Error: ' + err.message;
+                statusDiv.style.color = '#f87171';
+            } finally {
+                submitBtn.disabled = false;
+                btnText.textContent = 'Download File';
+            }
+        });
+    </script>
+</body>
+
+</html>
